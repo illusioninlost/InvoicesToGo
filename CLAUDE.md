@@ -54,15 +54,15 @@ This is a full-stack **rental invoice** management app (branded **RentInvoicesTo
 
 ### Email (`nodemailer`)
 
-Email sending requires these environment variables set before starting the server:
-```bash
-export EMAIL_HOST=smtp.gmail.com
-export EMAIL_PORT=587
-export EMAIL_USER=you@gmail.com
-export EMAIL_PASS=your-app-password
-export EMAIL_FROM=you@gmail.com
+Config lives in `server/email.config.js`. The password is loaded from `.env` (gitignored) via `dotenv`:
 ```
-For Gmail, use an App Password (not the regular account password).
+EMAIL_PASS=your-app-password
+```
+
+- SMTP: Gmail (`smtp.gmail.com`, port 587, `secure: false`)
+- `from` is set to `"RentInvoicesToGo" <your@gmail.com>` for display name branding
+- Gmail requires an App Password (not the regular account password) — generate at myaccount.google.com/apppasswords (requires 2FA)
+- The sending Gmail address cannot be spoofed; only the display name can be customized
 
 ### Frontend (`client/src/`)
 
