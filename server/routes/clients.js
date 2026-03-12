@@ -3,43 +3,51 @@ const router = express.Router();
 const db = require('../db');
 
 // GET /api/clients
-router.get('/', (req, res) => {
-  const clients = db.prepare('SELECT * FROM clients WHERE user_id = ? ORDER BY name ASC').all(req.userId);
-  res.json(clients);
+router.get('/', async (req, res) => {
+  const result = await db.query('SELECT * FROM clients WHERE user_id = $1 ORDER BY name ASC', [req.userId]);
+  res.json(result.rows);
 });
 
 // GET /api/clients/:id
-router.get('/:id', (req, res) => {
-  const client = db.prepare('SELECT * FROM clients WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
-  if (!client) return res.status(404).json({ error: 'Tenant not found' });
-  res.json(client);
+router.get('/:id', async (req, res) => {
+  const result = await db.query('SELECT * FROM clients WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+  if (!result.rows[0]) return res.status(404).json({ error: 'Tenant not found' });
+  res.json(result.rows[0]);
 });
 
 // POST /api/clients
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
+  const user = (await db.query('SELECT plan FROM users WHERE id = $1', [req.userId])).rows[0];
+  if (user?.plan === 'free') {
+    const { rows } = await db.query('SELECT COUNT(*) as count FROM clients WHERE user_id = $1', [req.userId]);
+    if (parseInt(rows[0].count) >= 3) {
+      return res.status(403).json({ error: 'upgrade_required', limit: 'tenants', message: 'Free plan is limited to 3 tenants. Upgrade to Pro for unlimited.' });
+    }
+  }
+
   const { name, address, phone, email, monthly_rent } = req.body;
-  const result = db.prepare(
-    'INSERT INTO clients (user_id, name, address, phone, email, monthly_rent) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(req.userId, name, address || '', phone || '', email || '', monthly_rent || 0);
-  const created = db.prepare('SELECT * FROM clients WHERE id = ?').get(result.lastInsertRowid);
-  res.status(201).json(created);
+  const result = await db.query(
+    'INSERT INTO clients (user_id, name, address, phone, email, monthly_rent) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+    [req.userId, name, address || '', phone || '', email || '', monthly_rent || 0]
+  );
+  res.status(201).json(result.rows[0]);
 });
 
 // PUT /api/clients/:id
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   const { name, address, phone, email, monthly_rent } = req.body;
-  const result = db.prepare(
-    'UPDATE clients SET name = ?, address = ?, phone = ?, email = ?, monthly_rent = ? WHERE id = ? AND user_id = ?'
-  ).run(name, address || '', phone || '', email || '', monthly_rent || 0, req.params.id, req.userId);
-  if (result.changes === 0) return res.status(404).json({ error: 'Client not found' });
-  const updated = db.prepare('SELECT * FROM clients WHERE id = ?').get(req.params.id);
-  res.json(updated);
+  const result = await db.query(
+    'UPDATE clients SET name = $1, address = $2, phone = $3, email = $4, monthly_rent = $5 WHERE id = $6 AND user_id = $7 RETURNING *',
+    [name, address || '', phone || '', email || '', monthly_rent || 0, req.params.id, req.userId]
+  );
+  if (result.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
+  res.json(result.rows[0]);
 });
 
 // DELETE /api/clients/:id
-router.delete('/:id', (req, res) => {
-  const result = db.prepare('DELETE FROM clients WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
-  if (result.changes === 0) return res.status(404).json({ error: 'Client not found' });
+router.delete('/:id', async (req, res) => {
+  const result = await db.query('DELETE FROM clients WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+  if (result.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
   res.json({ success: true });
 });
 

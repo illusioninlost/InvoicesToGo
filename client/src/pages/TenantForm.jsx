@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../apiFetch';
+import UpgradeNotice from '../components/UpgradeNotice';
 
 export default function TenantForm() {
   const { id } = useParams();
@@ -35,7 +36,7 @@ export default function TenantForm() {
     });
     const data = await res.json();
     if (!res.ok) {
-      setError(data.error || 'Failed to save tenant.');
+      setError(data.error === 'upgrade_required' ? data : (data.error || 'Failed to save tenant.'));
       setSaving(false);
       return;
     }
@@ -74,7 +75,10 @@ export default function TenantForm() {
           </div>
         </div>
 
-        {error && <div style={{ marginTop: 12, color: 'var(--danger)', fontWeight: 500 }}>{error}</div>}
+        {error && (error.error === 'upgrade_required'
+          ? <UpgradeNotice message={error.message} />
+          : <div style={{ marginTop: 12, color: 'var(--danger)', fontWeight: 500 }}>{error}</div>
+        )}
         <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
           <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save Tenant'}</button>
           <button type="button" className="btn btn-secondary" onClick={() => navigate('/tenants')}>Cancel</button>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../apiFetch';
+import UpgradeNotice from '../components/UpgradeNotice';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const dueDefault = () => {
@@ -117,7 +118,7 @@ export default function InvoiceForm() {
     const res = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const saved = await res.json();
     if (!res.ok) {
-      setError(saved.error || 'Failed to save invoice.');
+      setError(saved.error === 'upgrade_required' ? saved : (saved.error || 'Failed to save invoice.'));
       setSaving(false);
       return;
     }
@@ -219,7 +220,10 @@ export default function InvoiceForm() {
           </div>
         </div>
 
-        {error && <div className="form-error" style={{ marginTop: 12, color: 'var(--danger)', fontWeight: 500 }}>{error}</div>}
+        {error && (error.error === 'upgrade_required'
+          ? <UpgradeNotice message={error.message} />
+          : <div className="form-error" style={{ marginTop: 12, color: 'var(--danger)', fontWeight: 500 }}>{error}</div>
+        )}
         <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
           <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save Invoice'}</button>
           <button type="button" className="btn btn-secondary" onClick={() => navigate(-1)}>Cancel</button>

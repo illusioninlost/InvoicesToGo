@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { apiFetch } from '../apiFetch';
+import UpgradeNotice from './UpgradeNotice';
 
 export default function ClientModal({ onSave, onCancel }) {
   const [form, setForm] = useState({ name: '', address: '', phone: '', email: '' });
@@ -21,7 +22,7 @@ export default function ClientModal({ onSave, onCancel }) {
     });
     const data = await res.json();
     if (!res.ok) {
-      setError(data.error || 'Failed to save client.');
+      setError(data.error === 'upgrade_required' ? data : (data.error || 'Failed to save client.'));
       setSaving(false);
       return;
     }
@@ -51,7 +52,10 @@ export default function ClientModal({ onSave, onCancel }) {
               <input value={form.address} onChange={e => setField('address', e.target.value)} placeholder="Mailing address" />
             </div>
           </div>
-          {error && <div style={{ color: 'var(--danger)', fontSize: 13, marginTop: 12 }}>{error}</div>}
+          {error && (error.error === 'upgrade_required'
+            ? <UpgradeNotice message={error.message} />
+            : <div style={{ color: 'var(--danger)', fontSize: 13, marginTop: 12 }}>{error}</div>
+          )}
           <div className="modal-actions" style={{ marginTop: 20 }}>
             <button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Add Client'}</button>

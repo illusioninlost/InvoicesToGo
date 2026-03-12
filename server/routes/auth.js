@@ -50,48 +50,51 @@ function generateToken() {
 }
 
 // POST /api/auth/signup
-router.post('/signup', (req, res) => {
+router.post('/signup', async (req, res) => {
   const { name, email, phone, password } = req.body;
   if (!name || !email || !password) {
     return res.status(400).json({ error: 'Name, email, and password are required.' });
   }
 
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
-  if (existing) return res.status(409).json({ error: 'An account with that email already exists.' });
+  const existing = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+  if (existing.rows[0]) return res.status(409).json({ error: 'An account with that email already exists.' });
 
   const password_hash = hashPassword(password);
-  const result = db.prepare(
-    'INSERT INTO users (name, email, phone, password_hash) VALUES (?, ?, ?, ?)'
-  ).run(name, email, phone || null, password_hash);
+  const userResult = await db.query(
+    'INSERT INTO users (name, email, phone, password_hash) VALUES ($1, $2, $3, $4) RETURNING id',
+    [name, email, phone || null, password_hash]
+  );
+  const userId = userResult.rows[0].id;
 
   const token = generateToken();
-  db.prepare('INSERT INTO sessions (user_id, token) VALUES (?, ?)').run(result.lastInsertRowid, token);
+  await db.query('INSERT INTO sessions (user_id, token) VALUES ($1, $2)', [userId, token]);
 
-  res.status(201).json({ token, user: { id: result.lastInsertRowid, name, email, phone } });
+  res.status(201).json({ token, user: { id: userId, name, email, phone } });
 });
 
 // POST /api/auth/login
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+  const user = result.rows[0];
   if (!user || !verifyPassword(password, user.password_hash)) {
     return res.status(401).json({ error: 'Invalid email or password.' });
   }
 
   const token = generateToken();
-  db.prepare('INSERT INTO sessions (user_id, token) VALUES (?, ?)').run(user.id, token);
+  await db.query('INSERT INTO sessions (user_id, token) VALUES ($1, $2)', [user.id, token]);
 
   res.json({ token, user: { id: user.id, name: user.name, email: user.email, phone: user.phone } });
 });
 
 // POST /api/auth/logout
-router.post('/logout', (req, res) => {
+router.post('/logout', async (req, res) => {
   const header = req.headers.authorization;
   if (header && header.startsWith('Bearer ')) {
     const token = header.slice(7);
-    db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    await db.query('DELETE FROM sessions WHERE token = $1', [token]);
   }
   res.json({ ok: true });
 });
@@ -101,16 +104,17 @@ router.post('/request-reset', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email is required.' });
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+  const user = result.rows[0];
   // Always respond with success to avoid email enumeration
   if (!user) return res.json({ ok: true, message: 'If that email exists, a reset link has been sent.' });
 
   // Expire old tokens for this user
-  db.prepare('UPDATE password_resets SET used = 1 WHERE user_id = ?').run(user.id);
+  await db.query('UPDATE password_resets SET used = 1 WHERE user_id = $1', [user.id]);
 
   const token = generateToken();
   const expires = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
-  db.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)').run(user.id, token, expires);
+  await db.query('INSERT INTO password_resets (user_id, token, expires_at) VALUES ($1, $2, $3)', [user.id, token, expires]);
 
   try {
     await sendResetEmail(email, token);
@@ -123,13 +127,12 @@ router.post('/request-reset', async (req, res) => {
 });
 
 // POST /api/auth/reset-password
-router.post('/reset-password', (req, res) => {
+router.post('/reset-password', async (req, res) => {
   const { token, password } = req.body;
   if (!token || !password) return res.status(400).json({ error: 'Token and new password are required.' });
 
-  const reset = db.prepare(
-    'SELECT * FROM password_resets WHERE token = ? AND used = 0'
-  ).get(token);
+  const result = await db.query('SELECT * FROM password_resets WHERE token = $1 AND used = 0', [token]);
+  const reset = result.rows[0];
 
   if (!reset) return res.status(400).json({ error: 'Invalid or already used reset token.' });
 
@@ -138,10 +141,10 @@ router.post('/reset-password', (req, res) => {
   }
 
   const password_hash = hashPassword(password);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(password_hash, reset.user_id);
-  db.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').run(reset.id);
+  await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [password_hash, reset.user_id]);
+  await db.query('UPDATE password_resets SET used = 1 WHERE id = $1', [reset.id]);
   // Invalidate all sessions for this user after password reset
-  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(reset.user_id);
+  await db.query('DELETE FROM sessions WHERE user_id = $1', [reset.user_id]);
 
   res.json({ ok: true, message: 'Password reset successfully. Please log in.' });
 });

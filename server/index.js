@@ -2,42 +2,86 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
+const Stripe = require('stripe');
 const emailConfig = require('./email.config');
 const db = require('./db');
 const invoiceRoutes = require('./routes/invoices');
 const clientRoutes = require('./routes/clients');
 const authRoutes = require('./routes/auth');
+const billingRoutes = require('./routes/billing');
 const { requireAuth } = require('./middleware/auth');
+
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 const PORT = 3001;
 
 app.use(cors());
+
+// Stripe webhook must receive raw body — register before express.json()
+app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    await db.query(
+      'UPDATE users SET plan = $1, stripe_customer_id = $2 WHERE stripe_customer_id = $2',
+      ['pro', session.customer]
+    );
+    // Handle case where customer was just created and not yet saved
+    if (session.customer_email) {
+      await db.query(
+        'UPDATE users SET plan = $1, stripe_customer_id = $2 WHERE email = $3 AND stripe_customer_id IS NULL',
+        ['pro', session.customer, session.customer_email]
+      );
+    }
+  }
+
+  if (event.type === 'customer.subscription.deleted') {
+    const subscription = event.data.object;
+    await db.query(
+      'UPDATE users SET plan = $1 WHERE stripe_customer_id = $2',
+      ['free', subscription.customer]
+    );
+  }
+
+  res.json({ received: true });
+});
+
 app.use(express.json());
 
 app.use('/api/auth', authRoutes);
 app.use('/api/invoices', requireAuth, invoiceRoutes);
 app.use('/api/clients', requireAuth, clientRoutes);
+app.use('/api/billing', requireAuth, billingRoutes);
 
 // Reports endpoint with filter query params
-app.get('/api/reports', requireAuth, (req, res) => {
+app.get('/api/reports', requireAuth, async (req, res) => {
   const { startDate, endDate, client, status } = req.query;
-  const conditions = ['user_id = ?'];
+  const conditions = ['user_id = $1'];
   const params = [req.userId];
+  let paramCount = 1;
 
-  if (startDate) { conditions.push('date_created >= ?'); params.push(startDate); }
-  if (endDate)   { conditions.push('date_created <= ?'); params.push(endDate); }
-  if (client)    { conditions.push('LOWER(client_name) LIKE ?'); params.push(`%${client.toLowerCase()}%`); }
-  if (status)    { conditions.push('status = ?'); params.push(status); }
+  if (startDate) { conditions.push(`date_created >= $${++paramCount}`); params.push(startDate); }
+  if (endDate)   { conditions.push(`date_created <= $${++paramCount}`); params.push(endDate); }
+  if (client)    { conditions.push(`LOWER(client_name) LIKE $${++paramCount}`); params.push(`%${client.toLowerCase()}%`); }
+  if (status)    { conditions.push(`status = $${++paramCount}`); params.push(status); }
 
   const where = 'WHERE ' + conditions.join(' AND ');
-  const invoices = db.prepare(`SELECT * FROM invoices ${where} ORDER BY date_created DESC`).all(...params);
-  res.json(invoices.map(inv => ({ ...inv, items: typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items })));
+  const result = await db.query(`SELECT * FROM invoices ${where} ORDER BY date_created DESC`, params);
+  res.json(result.rows.map(inv => ({ ...inv, items: typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items })));
 });
 
 // Email invoice to tenant
 app.post('/api/invoices/:id/email', requireAuth, async (req, res) => {
-  const inv = db.prepare('SELECT * FROM invoices WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
+  const invResult = await db.query('SELECT * FROM invoices WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+  const inv = invResult.rows[0];
   if (!inv) return res.status(404).json({ error: 'Invoice not found' });
   if (!inv.client_email) return res.status(400).json({ error: 'This invoice has no tenant email address.' });
 

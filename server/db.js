@@ -1,73 +1,62 @@
-const { DatabaseSync } = require('node:sqlite');
-const path = require('path');
+const { Pool } = require('pg');
 
-const db = new DatabaseSync(path.join(__dirname, 'invoices.db'));
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS invoices (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    invoice_number TEXT NOT NULL,
-    client_name TEXT NOT NULL,
-    client_email TEXT,
-    client_address TEXT,
-    date_created TEXT NOT NULL,
-    due_date TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'unpaid',
-    items TEXT NOT NULL DEFAULT '[]',
-    total REAL NOT NULL DEFAULT 0,
-    notes TEXT
-  );
+async function initDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      phone TEXT,
+      password_hash TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      token TEXT NOT NULL UNIQUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS clients (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      name TEXT NOT NULL,
+      address TEXT,
+      phone TEXT,
+      email TEXT,
+      monthly_rent REAL NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS invoices (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER,
+      invoice_number TEXT NOT NULL,
+      client_name TEXT NOT NULL,
+      client_email TEXT,
+      client_address TEXT,
+      property_address TEXT NOT NULL DEFAULT '',
+      date_created TEXT NOT NULL,
+      due_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'unpaid',
+      items TEXT NOT NULL DEFAULT '[]',
+      total REAL NOT NULL DEFAULT 0,
+      notes TEXT,
+      UNIQUE(user_id, invoice_number)
+    );
+    CREATE TABLE IF NOT EXISTS password_resets (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      token TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
+  `);
+}
 
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
-    phone TEXT,
-    password_hash TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
+initDb().catch(console.error);
 
-  CREATE TABLE IF NOT EXISTS sessions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    token TEXT NOT NULL UNIQUE,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS clients (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    address TEXT,
-    phone TEXT,
-    email TEXT,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS password_resets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    token TEXT NOT NULL UNIQUE,
-    expires_at TEXT NOT NULL,
-    used INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-`);
-
-// Add user_id to invoices if it doesn't exist (migration for existing databases)
-try {
-  db.exec('ALTER TABLE invoices ADD COLUMN user_id INTEGER');
-} catch {}
-
-// Add unique index on (user_id, invoice_number) if not already present
-try {
-  db.exec('CREATE UNIQUE INDEX idx_invoices_user_invoice_number ON invoices(user_id, invoice_number)');
-} catch {}
-
-// Rental-specific columns
-try { db.exec("ALTER TABLE invoices ADD COLUMN property_address TEXT NOT NULL DEFAULT ''"); } catch {}
-try { db.exec("ALTER TABLE clients ADD COLUMN monthly_rent REAL NOT NULL DEFAULT 0"); } catch {}
-
-module.exports = db;
+module.exports = pool;
