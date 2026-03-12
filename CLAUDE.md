@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-Node.js lives at `C:\Program Files\nodejs\` and is not on the default bash PATH. Prefix all `node`/`npm` commands with:
+Node.js lives at `C:\Program Files\nodejs\` and is not on the default bash PATH. It has been added to `~/.bashrc` so new terminals will have it automatically. If needed:
 ```bash
 export PATH="/c/Program Files/nodejs:$PATH"
 ```
@@ -21,7 +21,7 @@ taskkill //F //IM node.exe
 
 **Start servers individually:**
 ```bash
-npm run server   # Express on :3001 (uses --experimental-sqlite flag)
+npm run server   # Express on :3001
 npm run client   # Vite on :5173
 ```
 
@@ -35,53 +35,71 @@ npm --prefix client run build
 npm install && npm --prefix client install
 ```
 
-**Reset database:** Delete `server/invoices.db` — it is recreated automatically on next server start.
-
 There are no tests or linting configured at the root level. The client has ESLint via `client/eslint.config.js` but no lint script is wired up.
 
 ## Architecture
 
-This is a full-stack **rental invoice** management app (branded **RentInvoicesToGo**) with a separate Express backend and Vite React frontend communicating via proxied `/api` requests.
+This is a full-stack **rental invoice** SaaS app (branded **RentInvoicesToGo**) with a separate Express backend and Vite React frontend communicating via proxied `/api` requests.
+
+**Live at:** https://rentinvoicestogo.com
+**Frontend:** Vercel
+**Backend:** Render (`rentinvoicestogo.onrender.com`)
+**Database:** PostgreSQL via Supabase
 
 ### Backend (`server/`)
 
-- **`db.js`** — Opens/creates `server/invoices.db` using Node's built-in `node:sqlite` module (requires `--experimental-sqlite` flag). Runs `CREATE TABLE IF NOT EXISTS` on startup. The DB file is created automatically on first run. Includes migration blocks (wrapped in `try/catch`) to add columns to existing databases.
-- **`routes/invoices.js`** — All invoice CRUD. Uses positional `?` params (not named `@param`) throughout to avoid `node:sqlite`'s requirement of prefixing named param keys with `@` in JS objects.
-- **`routes/clients.js`** — Client (tenant) CRUD. Scoped per `user_id`.
-- **`index.js`** — Mounts routes at `/api/invoices`, `/api/clients`, `/api/auth`. The `/api/reports` route and `/api/invoices/:id/email` route live directly in `index.js`. Reports builds a dynamic WHERE clause from query params: `startDate`, `endDate`, `client`, `status`. Email uses `nodemailer` with SMTP config from environment variables.
+- **`db.js`** — Connects to PostgreSQL using the `pg` package and `DATABASE_URL` env var. Runs `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` on startup via `initDb()`.
+- **`routes/invoices.js`** — Invoice CRUD. All routes are async, use `$1/$2` positional params, and enforce free tier limit (5 invoices) before creation.
+- **`routes/clients.js`** — Tenant CRUD. Scoped per `user_id`. Enforces free tier limit (3 tenants) before creation.
+- **`routes/auth.js`** — Signup, login, logout, password reset (email via nodemailer).
+- **`routes/billing.js`** — Stripe Checkout session creation, Customer Portal, and billing status endpoint.
+- **`middleware/auth.js`** — `requireAuth` middleware — validates Bearer token against `sessions` table, sets `req.userId`.
+- **`index.js`** — Mounts all routes. Stripe webhook handler lives here (must be before `express.json()` to receive raw body). Reports and email-invoice routes also live here.
 
-**Why `node:sqlite` instead of `better-sqlite3`:** `better-sqlite3` requires native compilation (node-gyp + Python). Node 24 has no prebuilt binaries for it. `node:sqlite` is built into Node 22+ and needs no compilation.
+### Payments (Stripe)
+
+- Free tier: 3 tenants, 5 invoices
+- Pro tier: $10/month, unlimited
+- Stripe Checkout used for upgrades (hosted payment page)
+- Stripe Customer Portal used for managing/cancelling subscriptions
+- Webhook events handled: `checkout.session.completed` → set plan to `pro`, `customer.subscription.deleted` → set plan to `free`
+- Required env vars: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`
 
 ### Email (`nodemailer`)
 
-Config lives in `server/email.config.js`. The password is loaded from `.env` (gitignored) via `dotenv`:
+Config lives in `server/email.config.js`. Password loaded from `.env` via `dotenv`:
 ```
 EMAIL_PASS=your-app-password
 ```
-
-- SMTP: Gmail (`smtp.gmail.com`, port 587, `secure: false`)
-- `from` is set to `"RentInvoicesToGo" <your@gmail.com>` for display name branding
-- Gmail requires an App Password (not the regular account password) — generate at myaccount.google.com/apppasswords (requires 2FA)
-- The sending Gmail address cannot be spoofed; only the display name can be customized
+- SMTP: Gmail (`smtp.gmail.com`, port 587)
+- Gmail App Password required (not regular password)
 
 ### Frontend (`client/src/`)
 
-- **`App.jsx`** — Sets up `BrowserRouter`, the sticky `Navbar` (branded RentInvoicesToGo) with active-link styling, and all routes.
-- **`index.css`** — All styling lives here as a single flat CSS file using CSS custom properties (`--primary`, `--bg`, `--border`, etc.). No CSS modules or styled-components. Print styles at the bottom hide nav/buttons for PDF export.
-- **`pages/InvoiceForm.jsx`** — Shared for both create (`/invoices/new`) and edit (`/invoices/:id/edit`). Fetches clients for a tenant dropdown (auto-fills name, email, address). Auto-generates `RENT-001` style numbers on create. Line item totals and invoice totals computed via `calcTotals()`.
-- **`pages/InvoiceDetail.jsx`** — Read-only invoice view. Has Print/PDF button, Email to Tenant button (calls `/api/invoices/:id/email`), and shows success/error banners. Displays house SVG logo next to brand name.
-- **`pages/Reports.jsx`** — Filters applied only on form submit (not live). CSV export includes property address, tenant info, and rental dates.
-- **`components/ClientModal.jsx`** — Modal for adding a new client/tenant (name, phone, email, address). Opened from the "+ Add Client" button on the invoice list.
-- **`components/ConfirmModal.jsx`** — Generic confirmation modal used for delete and mark-as-paid actions.
+- **`App.jsx`** — BrowserRouter, Navbar with user dropdown (Manage Subscription + Sign out), all routes.
+- **`index.css`** — All styling as a single flat CSS file using CSS custom properties. No CSS modules.
+- **`pages/InvoiceForm.jsx`** — Create/edit invoices. Shows `UpgradeNotice` on free tier limit.
+- **`pages/InvoiceDetail.jsx`** — Read-only view. Print/PDF and Email to Tenant buttons.
+- **`pages/Reports.jsx`** — Filtered reports with CSV export.
+- **`pages/Billing.jsx`** — Plan comparison (Free vs Pro), Upgrade and Manage Subscription buttons.
+- **`pages/TenantList.jsx`**, **`TenantForm.jsx`** — Tenant CRUD. Shows `UpgradeNotice` on free tier limit.
+- **`components/ClientModal.jsx`** — Quick-add tenant modal. Shows `UpgradeNotice` on free tier limit.
+- **`components/UpgradeNotice.jsx`** — Blue banner with "Upgrade Plan →" link to `/billing`, shown when free tier limit is hit.
+- **`components/ConfirmModal.jsx`** — Generic confirmation modal.
+
+### Deployment
+
+- **Vercel** — hosts frontend. `vercel.json` in repo root sets build config and proxies `/api/*` to Render backend.
+- **Render** — hosts Express backend. Required env vars: `DATABASE_URL`, `EMAIL_PASS`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`, `APP_URL=https://rentinvoicestogo.com`
+
+### Database tables (PostgreSQL)
+
+- **`invoices`** — `user_id`, `invoice_number`, client info, `property_address`, `items` (JSON string), `total`, `status`, dates, `notes`
+- **`clients`** — Tenant records (`name`, `address`, `phone`, `email`, `monthly_rent`) scoped per `user_id`
+- **`users`** — Auth accounts (`name`, `email`, `password_hash`, `plan`, `stripe_customer_id`)
+- **`sessions`** — Auth session tokens
+- **`password_resets`** — Password reset tokens with expiry
 
 ### Data flow
 
-All pages fetch directly from `/api/*` using the browser's `fetch`. Vite proxies `/api` to `http://localhost:3001` in dev. The `items` column is stored as a JSON string in SQLite and parsed back to an array in every API response via the `parseItems()` helper in `routes/invoices.js`.
-
-### Database tables
-
-- **`invoices`** — Stores computed totals (`subtotal`, `tax_amount`, `total`) alongside raw `items` JSON, `tax_rate`, `property_address`, `client_name`, `client_email`, `client_address`. Totals are calculated on the frontend before saving — no server-side recalculation.
-- **`clients`** — Tenant records (`name`, `address`, `phone`, `email`) scoped per `user_id`.
-- **`users`** — Auth accounts (`name`, `email`, `password_hash`).
-- **`sessions`** — Auth session tokens.
-- **`password_resets`** — Password reset tokens with expiry.
+All pages fetch from `/api/*`. Vite proxies `/api` to `http://localhost:3001` in dev. In production, Vercel rewrites `/api/*` to Render. The `items` column is stored as a JSON string and parsed in every API response via `parseItems()`.
