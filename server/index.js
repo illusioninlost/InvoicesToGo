@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const Stripe = require('stripe');
 const emailConfig = require('./email.config');
@@ -49,6 +50,28 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
 
 app.use(express.json());
 
+function unsubscribeToken(email) {
+  return crypto.createHmac('sha256', process.env.UNSUBSCRIBE_SECRET || 'rentinvoicestogo-unsub')
+    .update(email.toLowerCase()).digest('hex');
+}
+
+// GET /api/unsubscribe — public, no auth required
+app.get('/api/unsubscribe', async (req, res) => {
+  const { email, token } = req.query;
+  if (!email || !token || token !== unsubscribeToken(email)) {
+    return res.status(400).send('<p>Invalid unsubscribe link.</p>');
+  }
+  await db.query('INSERT INTO email_optouts (email) VALUES ($1) ON CONFLICT DO NOTHING', [email.toLowerCase()]);
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8">
+    <title>Unsubscribed — RentInvoicesToGo</title>
+    <style>body{font-family:system-ui,sans-serif;max-width:480px;margin:80px auto;padding:0 24px;color:#1a1d23;}
+    h1{font-size:20px;margin-bottom:12px;}p{color:#6b7280;line-height:1.6;}</style></head>
+    <body><h1>You've been unsubscribed.</h1>
+    <p>The email address <strong>${email}</strong> will no longer receive invoice emails from RentInvoicesToGo.</p>
+    <p>If this was a mistake, ask your landlord to contact <a href="mailto:itsoveragainagain@gmail.com">itsoveragainagain@gmail.com</a> to have it reversed.</p>
+    </body></html>`);
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api/invoices', requireAuth, invoiceRoutes);
 app.use('/api/clients', requireAuth, clientRoutes);
@@ -78,8 +101,13 @@ app.post('/api/invoices/:id/email', requireAuth, async (req, res) => {
   if (!inv) return res.status(404).json({ error: 'Invoice not found' });
   if (!inv.client_email) return res.status(400).json({ error: 'This invoice has no tenant email address.' });
 
+  const optout = await db.query('SELECT 1 FROM email_optouts WHERE email = $1', [inv.client_email.toLowerCase()]);
+  if (optout.rows[0]) return res.status(400).json({ error: 'This tenant has unsubscribed from invoice emails.' });
+
   const items = typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items;
   const fmt = n => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const appUrl = process.env.APP_URL || 'http://localhost:5173';
+  const unsubLink = `${appUrl}/api/unsubscribe?email=${encodeURIComponent(inv.client_email)}&token=${unsubscribeToken(inv.client_email)}`;
 
   const statusColors = {
     paid:    { bg: '#dcfce7', color: '#14532d' },
@@ -161,6 +189,16 @@ app.post('/api/invoices/:id/email', requireAuth, async (req, res) => {
           <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Notes</div>
           <p style="font-size:13px;color:#6b7280;margin:0;white-space:pre-line;">${inv.notes}</p>
         </div>` : ''}
+
+      </div>
+
+        <!-- Unsubscribe footer -->
+        <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e2e5ea;text-align:center;">
+          <p style="font-size:11px;color:#9ca3af;margin:0;">
+            This invoice was sent on behalf of your landlord via RentInvoicesToGo.<br>
+            <a href="${unsubLink}" style="color:#9ca3af;">Unsubscribe</a> from future invoice emails.
+          </p>
+        </div>
 
       </div>
     </div>`;

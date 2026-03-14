@@ -56,6 +56,12 @@ async function initDb() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 days');
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS email_optouts (
+      email TEXT PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
 }
 
 initDb().catch(console.error);
