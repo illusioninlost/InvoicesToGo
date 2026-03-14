@@ -56,7 +56,12 @@ export default function TenantList() {
               <tbody>
                 {tenants.map(t => (
                   <tr key={t.id}>
-                    <td style={{ fontWeight: 500 }}>{t.name}</td>
+                    <td style={{ fontWeight: 500 }}>
+                      {t.name}
+                      {t.recurring_enabled && (
+                        <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 600, background: '#dbeafe', color: '#1d4ed8', borderRadius: 4, padding: '2px 6px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>Auto</span>
+                      )}
+                    </td>
                     <td>{t.phone || <span className="text-muted">—</span>}</td>
                     <td>{t.email || <span className="text-muted">—</span>}</td>
                     <td>{t.address || <span className="text-muted">—</span>}</td>

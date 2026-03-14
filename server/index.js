@@ -11,6 +11,7 @@ const clientRoutes = require('./routes/clients');
 const authRoutes = require('./routes/auth');
 const billingRoutes = require('./routes/billing');
 const { requireAuth } = require('./middleware/auth');
+const { startJobs } = require('./jobs');
 
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -233,4 +234,5 @@ app.post('/api/invoices/:id/email', requireAuth, async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  startJobs();
 });

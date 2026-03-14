@@ -62,6 +62,11 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  await pool.query(`
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS recurring_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS recurring_day INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE invoices ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ;
+  `);
 }
 
 initDb().catch(console.error);

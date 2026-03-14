@@ -25,20 +25,20 @@ router.post('/', async (req, res) => {
     }
   }
 
-  const { name, address, phone, email, monthly_rent } = req.body;
+  const { name, address, phone, email, monthly_rent, recurring_enabled, recurring_day } = req.body;
   const result = await db.query(
-    'INSERT INTO clients (user_id, name, address, phone, email, monthly_rent) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-    [req.userId, name, address || '', phone || '', email || '', monthly_rent || 0]
+    'INSERT INTO clients (user_id, name, address, phone, email, monthly_rent, recurring_enabled, recurring_day) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+    [req.userId, name, address || '', phone || '', email || '', monthly_rent || 0, recurring_enabled || false, recurring_day || 1]
   );
   res.status(201).json(result.rows[0]);
 });
 
 // PUT /api/clients/:id
 router.put('/:id', async (req, res) => {
-  const { name, address, phone, email, monthly_rent } = req.body;
+  const { name, address, phone, email, monthly_rent, recurring_enabled, recurring_day } = req.body;
   const result = await db.query(
-    'UPDATE clients SET name = $1, address = $2, phone = $3, email = $4, monthly_rent = $5 WHERE id = $6 AND user_id = $7 RETURNING *',
-    [name, address || '', phone || '', email || '', monthly_rent || 0, req.params.id, req.userId]
+    'UPDATE clients SET name = $1, address = $2, phone = $3, email = $4, monthly_rent = $5, recurring_enabled = $6, recurring_day = $7 WHERE id = $8 AND user_id = $9 RETURNING *',
+    [name, address || '', phone || '', email || '', monthly_rent || 0, recurring_enabled || false, recurring_day || 1, req.params.id, req.userId]
   );
   if (result.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
   res.json(result.rows[0]);
