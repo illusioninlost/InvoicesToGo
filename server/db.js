@@ -65,6 +65,7 @@ async function initDb() {
   await pool.query(`
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS recurring_enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS recurring_day INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS late_fee REAL NOT NULL DEFAULT 0;
     ALTER TABLE invoices ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ;
   `);
 }

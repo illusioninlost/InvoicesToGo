@@ -8,14 +8,14 @@ export default function TenantForm() {
   const navigate = useNavigate();
   const isEdit = Boolean(id);
 
-  const [form, setForm] = useState({ name: '', phone: '', email: '', address: '', monthly_rent: '', recurring_enabled: false, recurring_day: 1 });
+  const [form, setForm] = useState({ name: '', phone: '', email: '', address: '', monthly_rent: '', late_fee: '', recurring_enabled: false, recurring_day: 1 });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     if (!isEdit) return;
     apiFetch(`/api/clients/${id}`).then(r => r.json()).then(t => {
-      setForm({ name: t.name, phone: t.phone || '', email: t.email || '', address: t.address || '', monthly_rent: t.monthly_rent || '', recurring_enabled: t.recurring_enabled || false, recurring_day: t.recurring_day || 1 });
+      setForm({ name: t.name, phone: t.phone || '', email: t.email || '', address: t.address || '', monthly_rent: t.monthly_rent || '', late_fee: t.late_fee || '', recurring_enabled: t.recurring_enabled || false, recurring_day: t.recurring_day || 1 });
     });
   }, [id, isEdit]);
 
@@ -69,9 +69,15 @@ export default function TenantForm() {
             <label>Address</label>
             <input required value={form.address} onChange={e => setField('address', e.target.value)} placeholder="Mailing address" />
           </div>
-          <div className="form-group" style={{ marginTop: 14 }}>
-            <label>Monthly Rent ($)</label>
-            <input required type="number" min="0" step="0.01" value={form.monthly_rent} onChange={e => setField('monthly_rent', e.target.value)} placeholder="0.00" />
+          <div className="form-grid" style={{ marginTop: 14 }}>
+            <div className="form-group">
+              <label>Monthly Rent ($)</label>
+              <input required type="number" min="0" step="0.01" value={form.monthly_rent} onChange={e => setField('monthly_rent', e.target.value)} placeholder="0.00" />
+            </div>
+            <div className="form-group">
+              <label>Late Fee ($) <span className="auth-label-hint">auto-added when overdue</span></label>
+              <input type="number" min="0" step="0.01" value={form.late_fee} onChange={e => setField('late_fee', e.target.value)} placeholder="0.00" />
+            </div>
           </div>
 
           <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid var(--border)' }} />

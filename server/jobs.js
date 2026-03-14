@@ -33,12 +33,37 @@ async function runDailyJobs() {
 
   console.log(`[Jobs] Running daily jobs for ${todayStr}`);
 
-  // 1. Mark unpaid invoices past their due date as overdue
-  const { rowCount: markedOverdue } = await db.query(
-    `UPDATE invoices SET status = 'overdue' WHERE status = 'unpaid' AND due_date < $1`,
+  // 1. Mark unpaid invoices past their due date as overdue, applying late fee if set
+  const { rows: nowOverdue } = await db.query(
+    `SELECT * FROM invoices WHERE status = 'unpaid' AND due_date < $1`,
     [todayStr]
   );
-  if (markedOverdue > 0) console.log(`[Jobs] Marked ${markedOverdue} invoice(s) as overdue`);
+
+  for (const inv of nowOverdue) {
+    const items = typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items;
+
+    // Look up client's late fee
+    const { rows: clientRows } = await db.query(
+      'SELECT late_fee FROM clients WHERE user_id = $1 AND name = $2',
+      [inv.user_id, inv.client_name]
+    );
+    const lateFee = clientRows[0]?.late_fee || 0;
+
+    // Append late fee line if > 0 and not already present
+    const alreadyHasLateFee = items.some(it => it.description === 'Late Fee');
+    if (lateFee > 0 && !alreadyHasLateFee) {
+      items.push({ description: 'Late Fee', quantity: 1, unit_price: lateFee, amount: lateFee });
+      const newTotal = items.reduce((s, it) => s + (it.amount || 0), 0);
+      await db.query(
+        `UPDATE invoices SET status = 'overdue', items = $1, total = $2 WHERE id = $3`,
+        [JSON.stringify(items), newTotal, inv.id]
+      );
+    } else {
+      await db.query(`UPDATE invoices SET status = 'overdue' WHERE id = $1`, [inv.id]);
+    }
+  }
+
+  if (nowOverdue.length > 0) console.log(`[Jobs] Marked ${nowOverdue.length} invoice(s) as overdue`);
 
   // 2. Send overdue reminders (once per invoice)
   const { rows: overdueInvoices } = await db.query(`
